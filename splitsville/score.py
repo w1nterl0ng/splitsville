@@ -238,6 +238,15 @@ _TEMPLATE = r"""<!DOCTYPE html>
       </select>
       measure(s)
     </label>
+    <label>Speed
+      <select id="speed">
+        <option value="0.5">50%</option>
+        <option value="0.75">75%</option>
+        <option value="0.9">90%</option>
+        <option value="1" selected>100%</option>
+        <option value="1.2">120%</option>
+      </select>
+    </label>
     <button id="stop" type="button">Stop</button>
     <span class="status" id="status">Click a bar to play. Drag on the wave to loop. <kbd>Space</kbd> pause/resume. <kbd>Esc</kbd> clears the loop. Keys <kbd>0</kbd>–<kbd>9</kbd> set stop-after.</span>
   </div>
@@ -254,6 +263,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     const player = document.getElementById("player");
     const widthSel = document.getElementById("width");
     const stopAfterSel = document.getElementById("stopAfter");
+    const speedSel = document.getElementById("speed");
     const status = document.getElementById("status");
     function barLabel(i) {
       const labels = data.labels || [];
@@ -275,6 +285,14 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
     function stopAfterCount() {
       return Number(stopAfterSel.value) || 0;
+    }
+
+    function applySpeed() {
+      const rate = Number(speedSel.value) || 1;
+      player.playbackRate = rate;
+      player.preservesPitch = true;
+      player.webkitPreservesPitch = true;
+      player.mozPreservesPitch = true;
     }
 
     function viewBarCount() {
@@ -810,6 +828,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
     document.getElementById("stop").addEventListener("click", () => halt("Stopped."));
     widthSel.addEventListener("change", render);
     stopAfterSel.addEventListener("change", () => setStopAfter(stopAfterCount()));
+    speedSel.addEventListener("change", applySpeed);
+    applySpeed();
     player.addEventListener("timeupdate", () => { checkLoop(); checkStop(); highlight(); });
     player.addEventListener("ended", () => { status.textContent = "Ended."; highlight(); });
     document.body.addEventListener("mouseenter", () => document.body.focus());
