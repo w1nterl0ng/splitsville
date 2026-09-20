@@ -1,0 +1,25 @@
+[project]
+name = "splitsville"
+version = "0.1.0"
+description = "POC: click-track bar slicing and repeated-measure matching"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "scipy",
+    "soundfile",
+    "streamlit",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["splitsville*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

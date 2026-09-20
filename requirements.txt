@@ -1,0 +1,6 @@
+numpy
+scipy
+soundfile
+streamlit
+matplotlib
+pytest
