@@ -1,0 +1,15 @@
+Transcribe! for Macintosh document. Version 6089.00
+Transcribe!,Macintosh OS-X,9,60,7,S,3
+
+SectionStart,Main
+SoundFileName,demo.wav,MacOSX,/tmp/does-not-exist.wav
+SoundFileInfo,WAV,WAV,1,100,44100,44100,1.000000
+SectionEnd,Main
+
+SectionStart,Markers
+Howmany,4
+S,-1,1,A1,4,0:00:00.000000,
+M,-1,1,A2,0,0:00:02.000000,
+M,-1,1,A9,2,0:00:15.964375,
+S,-1,1,B10,4,0:00:17.262774,
+SectionEnd,Markers

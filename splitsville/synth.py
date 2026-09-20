@@ -15,6 +15,24 @@ def _click(sr: int, dur: float = 0.012) -> np.ndarray:
     return burst.astype(np.float32)
 
 
+def clicks_from_times(
+    times,
+    duration: float,
+    sr: int,
+) -> np.ndarray:
+    """Render a mono click track from marker times, shaped (n_samples, 1)."""
+    n = max(1, int(round(duration * sr)))
+    track = np.zeros(n, dtype=np.float32)
+    burst = _click(sr)
+    for t in times:
+        start = int(round(float(t) * sr))
+        if start < 0 or start >= n:
+            continue
+        stop = min(n, start + burst.size)
+        track[start:stop] += burst[: stop - start]
+    return np.clip(track, -1.0, 1.0).reshape(-1, 1)
+
+
 def _tone_chord(freqs: list[float], sr: int, dur: float) -> np.ndarray:
     t = np.arange(int(sr * dur)) / sr
     wave = np.zeros_like(t, dtype=np.float64)

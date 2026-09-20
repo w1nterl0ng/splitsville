@@ -40,6 +40,8 @@ def render_score(
     default_width: int = 16,
     click_peaks: dict | None = None,
     stem_peaks: dict | None = None,
+    labels: list[str] | None = None,
+    beats: list[float] | None = None,
 ) -> None:
     if not measures or not audio_bytes:
         return
@@ -62,6 +64,8 @@ def render_score(
         "defaultWidth": int(default_width),
         "clickPeaks": click_peaks,
         "stemPeaks": stem_peaks,
+        "labels": list(labels or []),
+        "beats": [float(t) for t in (beats or [])],
     }
     b64 = base64.b64encode(audio_bytes).decode("ascii")
     html = _TEMPLATE.replace("__PAYLOAD__", json.dumps(payload)).replace("__MIME__", mime).replace(
@@ -183,6 +187,10 @@ _TEMPLATE = r"""<!DOCTYPE html>
     const widthSel = document.getElementById("width");
     const stopAfterSel = document.getElementById("stopAfter");
     const status = document.getElementById("status");
+    function barLabel(i) {
+      const labels = data.labels || [];
+      return labels[i] || String(i + 1);
+    }
     const canvas = document.getElementById("wave");
     const ctx = canvas.getContext("2d");
     widthSel.value = String(data.defaultWidth);
@@ -336,7 +344,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
         const x = x0 + ((data.starts[i] - win.t0) / dur) * innerW;
         ctx.fillStyle = "rgba(40,28,8,0.22)";
         ctx.fillRect(x, flagH, 1, h - flagH);
-        const label = String(i + 1);
+        const label = barLabel(i);
         const tw = Math.max(22, ctx.measureText(label).width + 10);
         ctx.fillStyle = "#3d8f45";
         ctx.beginPath();
@@ -349,6 +357,16 @@ _TEMPLATE = r"""<!DOCTYPE html>
         ctx.fill();
         ctx.fillStyle = "#f4fff4";
         ctx.fillText(label, x, 13);
+      }
+
+      const beats = data.beats || [];
+      for (const bt of beats) {
+        if (bt < win.t0 - 0.01 || bt > win.t1 + 0.01) continue;
+        const x = x0 + ((bt - win.t0) / dur) * innerW;
+        ctx.fillStyle = "rgba(198,40,40,0.22)";
+        ctx.fillRect(x, flagH, 1, h - flagH);
+        ctx.fillStyle = "#c62828";
+        ctx.fillRect(x, 14, 2, 12);
       }
 
       if (loop) {
@@ -391,8 +409,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
           btn.style.background = data.colors[gi % data.colors.length];
         }
         const gLabel = gi === undefined ? "" : `<span class="g">G${gi + 1}</span>`;
-        btn.innerHTML = `${i + 1}${gLabel}`;
-        btn.title = `Bar ${i + 1}  ${data.starts[i].toFixed(2)}s` +
+        btn.innerHTML = `${barLabel(i)}${gLabel}`;
+        btn.title = `Bar ${barLabel(i)}  ${data.starts[i].toFixed(2)}s` +
           (gi === undefined ? "" : `  group ${gi + 1}`);
         btn.addEventListener("click", () => playFrom(i));
         score.appendChild(btn);
