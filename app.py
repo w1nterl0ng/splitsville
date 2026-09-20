@@ -61,6 +61,7 @@ def analyze(
     min_interval: float,
     click_threshold: float,
     match_threshold: float,
+    matcher_version: int = 3,
 ):
     result = run_pipeline(
         io.BytesIO(click_bytes),
@@ -81,6 +82,7 @@ def analyze(
         "marker_source": result.marker_source,
         "click_peaks": peak_envelope(result.click, result.click_sr),
         "sound_path": result.sound_path,
+        "matcher_version": matcher_version,
     }
 
 
@@ -162,6 +164,7 @@ if click_bytes and stem_bytes:
         min_interval,
         click_threshold,
         match_threshold,
+        3,
     )
     measures = analysis["measures"]
     groups = analysis["groups"]

@@ -46,6 +46,19 @@ def test_matching_groups_repeated_chords():
     assert grouped == expected
 
 
+def test_duration_gate_rejects_short_bar():
+    click, stem, sr, sequence = make_demo()
+    duration = stem.shape[0] / sr
+    times = detect_click_times(click, sr)
+    measures = measures_from_clicks(times, duration)
+    slices = slice_stem(stem.reshape(-1, 1), sr, measures)
+    half = slices[0][: slices[0].shape[0] // 2]
+    sim = slice_similarity_matrix([slices[0], slices[2], half], sr)
+    assert sim[0, 1] >= 0.85
+    assert sim[0, 2] < 0.2
+    assert sim[1, 2] < 0.2
+
+
 def test_pipeline_writes_slices(tmp_path: Path):
     click_path, stem_path, sequence = write_demo(tmp_path / "demo")
     result = run_pipeline(click_path, stem_path, out_dir=tmp_path / "out")
