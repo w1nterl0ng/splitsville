@@ -6,7 +6,14 @@ from pathlib import Path
 import numpy as np
 
 from .clicks import detect_click_times, measures_from_clicks
-from .match import feature_matrix, group_matches, slice_similarity_matrix
+from .match import (
+    BAND_PRESETS,
+    detect_band,
+    feature_matrix,
+    group_matches,
+    group_subdiv_ratings,
+    slice_similarity_matrix,
+)
 from .split import load_audio, slice_stem, write_slices
 from .synth import clicks_from_times
 from .xsc import beat_times, looks_like_xsc, parse_xsc, source_bytes
@@ -27,6 +34,11 @@ class PipelineResult:
     beat_times: list[float] = field(default_factory=list)
     marker_source: str = "audio"
     sound_path: str | None = None
+    subdivs: list[int] = field(default_factory=list)
+    subdiv_ratings: dict[int, list[float]] = field(default_factory=dict)
+    band_name: str = "bass"
+    fmin: float = 40.0
+    fmax: float = 400.0
     slice_paths: list[Path] = field(default_factory=list)
 
 
@@ -38,10 +50,12 @@ def run_pipeline(
     click_threshold: float = 0.25,
     match_threshold: float = 0.85,
     out_dir: Path | None = None,
+    instrument: str = "auto",
 ) -> PipelineResult:
     marker_bytes = source_bytes(click_source)
     labels: list[str] = []
     beats: list[float] = []
+    subdivs: list[int] = []
     sound_path: str | None = None
     xsc_doc = None
 
@@ -64,6 +78,7 @@ def run_pipeline(
     if xsc_doc is not None:
         click_times = np.array([m.time for m in xsc_doc.markers], dtype=np.float64)
         labels = [m.label for m in xsc_doc.markers]
+        subdivs = [max(1, m.subdivisions) for m in xsc_doc.markers]
         beats = beat_times(xsc_doc.markers, duration)
         click = clicks_from_times(click_times, duration, stem_sr)
         click_sr = stem_sr
@@ -81,10 +96,23 @@ def run_pipeline(
     measures = measures_from_clicks(click_times, duration)
     if labels and len(labels) > len(measures):
         labels = labels[: len(measures)]
+    if subdivs and len(subdivs) > len(measures):
+        subdivs = subdivs[: len(measures)]
+    if not subdivs:
+        subdivs = [4] * len(measures)
     slices = slice_stem(stem, stem_sr, measures)
-    features = feature_matrix(slices, stem_sr)
-    similarity = slice_similarity_matrix(slices, stem_sr)
+    instrument = (instrument or "auto").lower()
+    if instrument in BAND_PRESETS:
+        band_name = instrument
+        fmin, fmax = BAND_PRESETS[instrument]
+    else:
+        band_name, fmin, fmax = detect_band(stem, stem_sr)
+    features = feature_matrix(slices, stem_sr, fmin=fmin, fmax=fmax)
+    similarity = slice_similarity_matrix(slices, stem_sr, fmin=fmin, fmax=fmax)
     groups = group_matches(similarity, threshold=match_threshold)
+    subdiv_ratings = group_subdiv_ratings(
+        slices, stem_sr, groups, subdivs, fmin=fmin, fmax=fmax
+    )
 
     slice_paths: list[Path] = []
     if out_dir is not None:
@@ -104,5 +132,10 @@ def run_pipeline(
         beat_times=beats,
         marker_source=marker_source,
         sound_path=sound_path,
+        subdivs=subdivs,
+        subdiv_ratings=subdiv_ratings,
+        band_name=band_name,
+        fmin=fmin,
+        fmax=fmax,
         slice_paths=slice_paths,
     )

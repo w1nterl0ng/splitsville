@@ -59,6 +59,37 @@ def test_duration_gate_rejects_short_bar():
     assert sim[1, 2] < 0.2
 
 
+def test_subdiv_ratings_flag_changed_last_beat():
+    from splitsville.match import group_subdiv_ratings
+
+    sr = 22050
+    n = sr
+    t = np.arange(n) / sr
+    same = np.sin(2 * np.pi * 110 * t).astype(np.float32).reshape(-1, 1)
+    varied = same.copy()
+    varied[int(0.75 * n) :] = np.sin(2 * np.pi * 196 * t[int(0.75 * n) :]).reshape(-1, 1)
+    ratings = group_subdiv_ratings([same, varied], sr, [[0, 1]], [4, 4])
+    assert ratings[0] == [1.0, 1.0, 1.0, 1.0]
+    assert ratings[1][0] > 0.9
+    assert ratings[1][3] < 0.8
+    assert ratings[1][3] < ratings[1][0]
+
+
+def test_detect_band_low_vs_high_tone():
+    from splitsville.match import detect_band
+
+    sr = 22050
+    t = np.arange(int(sr * 2)) / sr
+    bass = np.sin(2 * np.pi * 80 * t).astype(np.float32).reshape(-1, 1)
+    guitar = np.sin(2 * np.pi * 800 * t).astype(np.float32).reshape(-1, 1)
+    bname, bmin, bmax = detect_band(bass, sr)
+    gname, gmin, gmax = detect_band(guitar, sr)
+    assert bname == "bass"
+    assert bmax <= 400
+    assert gname == "guitar"
+    assert gmax >= 2000
+
+
 def test_pipeline_writes_slices(tmp_path: Path):
     click_path, stem_path, sequence = write_demo(tmp_path / "demo")
     result = run_pipeline(click_path, stem_path, out_dir=tmp_path / "out")

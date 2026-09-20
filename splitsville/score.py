@@ -42,6 +42,8 @@ def render_score(
     stem_peaks: dict | None = None,
     labels: list[str] | None = None,
     beats: list[float] | None = None,
+    subdivs: list[int] | None = None,
+    subdiv_ratings: dict[int, list[float]] | None = None,
 ) -> None:
     if not measures or not audio_bytes:
         return
@@ -66,13 +68,19 @@ def render_score(
         "stemPeaks": stem_peaks,
         "labels": list(labels or []),
         "beats": [float(t) for t in (beats or [])],
+        "groups": [list(g) for g in groups],
+        "subdivs": [int(n) for n in (subdivs or [])],
+        "subdivConf": {
+            str(idx): [float(v) for v in vals]
+            for idx, vals in (subdiv_ratings or {}).items()
+        },
     }
     b64 = base64.b64encode(audio_bytes).decode("ascii")
     html = _TEMPLATE.replace("__PAYLOAD__", json.dumps(payload)).replace("__MIME__", mime).replace(
         "__AUDIO__", b64
     )
     rows_guess = max(1, (len(measures) + default_width - 1) // default_width)
-    height = min(920, 300 + rows_guess * 52)
+    height = min(980, 320 + rows_guess * 52)
     components.html(html, height=height, scrolling=True)
 
 
@@ -125,7 +133,63 @@ _TEMPLATE = r"""<!DOCTYPE html>
     box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35);
   }
   #wave { width: 100%; height: 198px; display: block; cursor: crosshair; }
-  .score { display: grid; gap: 5px; }
+  .body {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .score {
+    display: grid;
+    gap: 5px;
+    flex: 1 1 76%;
+    min-width: 0;
+  }
+  .matches {
+    flex: 0 0 26%;
+    min-width: 188px;
+    max-width: 360px;
+    max-height: 560px;
+    overflow-y: auto;
+    padding: 8px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.04);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+  }
+  .matches h3 {
+    margin: 0 0 4px 0;
+    font-size: 13px;
+    font-weight: 650;
+  }
+  .matches .hint {
+    margin: 0 0 8px 0;
+    font-size: 11px;
+    opacity: 0.7;
+    line-height: 1.3;
+  }
+  .mrow {
+    margin: 0 0 7px 0;
+    padding: 6px;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background: rgba(0,0,0,0.18);
+    cursor: pointer;
+  }
+  .mrow.listening {
+    border-color: #f4f4f5;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.35);
+  }
+  .mrow .mlabel {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: 650;
+    margin-bottom: 4px;
+  }
+  .mrow .mlabel .truth { opacity: 0.65; font-weight: 500; font-size: 10px; }
+  .phrase { display: flex; gap: 5px; }
+  .mcol { flex: 1; min-width: 0; }
+  .beats { display: flex; gap: 3px; height: 16px; }
+  .beat { flex: 1; border-radius: 3px; min-width: 0; }
   .cell {
     min-height: 42px;
     border: 0;
@@ -178,11 +242,15 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <span class="status" id="status">Click a bar to play. Drag on the wave to loop. <kbd>Space</kbd> pause/resume. <kbd>Esc</kbd> clears the loop. Keys <kbd>0</kbd>–<kbd>9</kbd> set stop-after.</span>
   </div>
   <div class="wave-wrap"><canvas id="wave"></canvas></div>
-  <div id="score" class="score"></div>
+  <div class="body">
+    <div id="score" class="score"></div>
+    <aside id="matches" class="matches"></aside>
+  </div>
   <audio id="player" preload="auto" src="data:__MIME__;base64,__AUDIO__"></audio>
   <script>
     const data = __PAYLOAD__;
     const score = document.getElementById("score");
+    const matches = document.getElementById("matches");
     const player = document.getElementById("player");
     const widthSel = document.getElementById("width");
     const stopAfterSel = document.getElementById("stopAfter");
@@ -200,6 +268,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     let stopTime = null;
     let loop = null;
     let drag = null;
+    let panelAnchor = 0;
     const WAVE_PAD = 14;
     const HANDLE_PX = 8;
     const MIN_LOOP = 0.08;
@@ -415,19 +484,114 @@ _TEMPLATE = r"""<!DOCTYPE html>
         btn.addEventListener("click", () => playFrom(i));
         score.appendChild(btn);
       }
+      renderMatchPanel();
       highlight();
       drawWave();
     }
 
-    function playFrom(i) {
+    function barToken(i) {
+      const g = data.groupOf[String(i)];
+      return g === undefined ? "u:" + i : "g:" + g;
+    }
+
+    function phraseLength(anchor) {
+      const n = stopAfterCount();
+      const len = n > 0 ? n : 1;
+      return Math.max(1, Math.min(len, data.n - anchor));
+    }
+
+    function phraseStarts(anchor) {
+      const n = phraseLength(anchor);
+      const pat = [];
+      for (let k = 0; k < n; k++) pat.push(barToken(anchor + k));
+      const starts = [];
+      for (let i = 0; i <= data.n - n; i++) {
+        let ok = true;
+        for (let k = 0; k < n; k++) {
+          if (barToken(i + k) !== pat[k]) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) starts.push(i);
+      }
+      return { n, starts };
+    }
+
+    function beatStrip(idx, subdivN, isTruth) {
+      const vals = ratingFor(idx, subdivN, isTruth);
+      let html = `<div class="mcol"><div class="mlabel"><span>${barLabel(idx)}</span></div><div class="beats">`;
+      for (const v of vals) {
+        html += `<div class="beat" title="${v.toFixed(2)}" style="background:${confColor(v)}"></div>`;
+      }
+      return html + `</div></div>`;
+    }
+
+    function confColor(c) {
+      // Same-music takes are ~0.90–0.99. Keep those green; reserve red for real riff changes.
+      const x = Math.min(1, Math.max(0, (Number(c) - 0.80) / 0.18));
+      const stops = x < 0.5
+        ? [[239, 68, 68], [234, 179, 8], x * 2]
+        : [[234, 179, 8], [34, 197, 94], (x - 0.5) * 2];
+      const t = stops[2];
+      const r = Math.round(stops[0][0] + (stops[1][0] - stops[0][0]) * t);
+      const g = Math.round(stops[0][1] + (stops[1][1] - stops[0][1]) * t);
+      const b = Math.round(stops[0][2] + (stops[1][2] - stops[0][2]) * t);
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+
+    function ratingFor(idx, n, isTruth) {
+      if (isTruth) return Array.from({ length: n }, () => 1);
+      const found = (data.subdivConf || {})[String(idx)];
+      if (found && found.length) return found;
+      return Array.from({ length: n }, () => 1);
+    }
+
+    function renderMatchPanel() {
+      const { n, starts } = phraseStarts(panelAnchor);
+      const truthStart = starts[0];
+      const title = n === 1
+        ? (data.groupOf[String(panelAnchor)] === undefined
+          ? barLabel(panelAnchor)
+          : `G${Number(data.groupOf[String(panelAnchor)]) + 1} vs ${barLabel(truthStart)}`)
+        : `${n}-bar phrase`;
+      const hint = n === 1
+        ? "Each cell is a beat. Green matches the first bar in the group."
+        : "Each row is the same " + n + " groups in a row. Green matches the first time that phrase appears.";
+      const listening = player.paused ? panelAnchor : currentBar();
+      let html = `<h3>${title}</h3><p class="hint">${hint}</p>`;
+      for (const start of starts) {
+        const isTruth = start === truthStart;
+        const on = listening >= start && listening < start + n;
+        const rowLabel = [];
+        for (let k = 0; k < n; k++) rowLabel.push(barLabel(start + k));
+        html += `<div class="mrow${on ? " listening" : ""}" data-i="${start}">`;
+        html += `<div class="mlabel"><span>${rowLabel.join("–")}</span>${isTruth ? '<span class="truth">reference</span>' : ""}</div>`;
+        html += `<div class="phrase">`;
+        for (let k = 0; k < n; k++) {
+          const idx = start + k;
+          const subdivN = Math.max(1, (data.subdivs && data.subdivs[idx]) || 4);
+          html += beatStrip(idx, subdivN, isTruth);
+        }
+        html += `</div></div>`;
+      }
+      matches.innerHTML = html;
+      for (const row of matches.querySelectorAll(".mrow")) {
+        row.addEventListener("click", () => playFrom(Number(row.dataset.i), true));
+      }
+    }
+
+    function playFrom(i, keepPanel) {
       loop = null;
       playStart = i;
       viewOrigin = i;
+      if (!keepPanel) panelAnchor = i;
       stopTime = stopTimeFrom(i);
       player.currentTime = Math.max(0, data.starts[i] + 0.001);
       player.play();
       status.textContent = describePlay(i);
       document.body.focus();
+      renderMatchPanel();
       highlight();
       drawWave();
     }
@@ -496,6 +660,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
         ? "Stop-after off (play through)."
         : "Stop after " + n + " measure" + (n === 1 ? "" : "s") + ".";
       if (!player.paused) status.textContent = describePlay(playStart);
+      renderMatchPanel();
+      highlight();
       drawWave();
     }
 
@@ -503,6 +669,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
       const idx = player.paused ? -1 : currentBar();
       for (const btn of score.querySelectorAll(".cell")) {
         btn.classList.toggle("playing", Number(btn.dataset.i) === idx);
+      }
+      const listening = idx < 0 ? panelAnchor : idx;
+      for (const row of matches.querySelectorAll(".mrow")) {
+        const start = Number(row.dataset.i);
+        const n = phraseLength(start);
+        row.classList.toggle("listening", listening >= start && listening < start + n);
       }
     }
 

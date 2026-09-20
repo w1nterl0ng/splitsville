@@ -26,6 +26,10 @@ FIRE_STEM = Path(
     "/Users/fredanderson/Music/Logic/fire-test-05/Bounces/"
     "fire-test-05-bass-di-gain.mp3"
 )
+FIRE_GUITAR = Path(
+    "/Users/fredanderson/Music/Logic/fire-test-05/Bounces/"
+    "fire-test-05-g1-l-gain.mp3"
+)
 
 MAX_EMBED_AUDIO = 15_000_000
 
@@ -42,8 +46,16 @@ with st.sidebar:
     min_interval = st.slider("Min measure length (s)", 0.3, 3.0, 0.6, 0.05)
     click_threshold = st.slider("Click threshold", 0.05, 0.8, 0.25, 0.01)
     match_threshold = st.slider("Match threshold", 0.50, 0.99, 0.85, 0.01)
+    instrument = st.segmented_control(
+        "Instrument band",
+        options=["Auto", "Bass", "Guitar"],
+        default="Auto",
+        required=True,
+        help="Auto guesses from the stem spectrum. Override if the guess is wrong.",
+    )
     use_demo = st.button("Load synthetic demo", width="stretch")
     use_fire = st.button("Load fire-test-05 bass", width="stretch")
+    use_guitar = st.button("Load fire-test-05 guitar", width="stretch")
 
 
 def _wav_bytes(audio: np.ndarray, sr: int) -> bytes:
@@ -61,7 +73,8 @@ def analyze(
     min_interval: float,
     click_threshold: float,
     match_threshold: float,
-    matcher_version: int = 3,
+    matcher_version: int = 6,
+    instrument: str = "auto",
 ):
     result = run_pipeline(
         io.BytesIO(click_bytes),
@@ -69,6 +82,7 @@ def analyze(
         min_interval=min_interval,
         click_threshold=click_threshold,
         match_threshold=match_threshold,
+        instrument=instrument,
     )
     return {
         "click_times": result.click_times,
@@ -83,6 +97,11 @@ def analyze(
         "click_peaks": peak_envelope(result.click, result.click_sr),
         "sound_path": result.sound_path,
         "matcher_version": matcher_version,
+        "subdivs": result.subdivs,
+        "subdiv_ratings": {str(k): v for k, v in result.subdiv_ratings.items()},
+        "band_name": result.band_name,
+        "fmin": result.fmin,
+        "fmax": result.fmax,
     }
 
 
@@ -141,6 +160,17 @@ if use_fire:
             _load_stem_path(FIRE_STEM)
         st.success("fire-test-05 loaded from click-track audio")
 
+if use_guitar:
+    if not FIRE_GUITAR.exists():
+        st.error("fire-test-05 guitar bounce was not found.")
+    elif not FIRE_XSC.exists():
+        st.error("Transcribe .xsc was not found.")
+    else:
+        with st.spinner("Loading fire-test-05 guitar from Transcribe .xsc…"):
+            st.session_state["click_bytes"] = FIRE_XSC.read_bytes()
+            _load_stem_path(FIRE_GUITAR)
+            st.success(f"Loaded {FIRE_GUITAR.name} from {FIRE_XSC.name}")
+
 if click_file is not None:
     st.session_state["click_bytes"] = click_file.getvalue()
     if looks_like_xsc(st.session_state["click_bytes"]) and stem_file is None:
@@ -164,7 +194,8 @@ if click_bytes and stem_bytes:
         min_interval,
         click_threshold,
         match_threshold,
-        3,
+        6,
+        (instrument or "Auto").lower(),
     )
     measures = analysis["measures"]
     groups = analysis["groups"]
@@ -183,8 +214,8 @@ if click_bytes and stem_bytes:
     st.subheader("Score")
     st.caption(
         "Each cell is a measure. Matching groups share a color. "
-        "Click a cell to play that bar and continue from there. "
-        "The waveform shows the playing window (stop-after N bars, or 4 if you chose 0)."
+        "Click a cell to play and to stack that group on the right. "
+        "Beat cells are rated against the first bar in the group (green = same, red = different)."
     )
     if play_bytes and len(play_bytes) <= MAX_EMBED_AUDIO:
         render_score(
@@ -197,6 +228,10 @@ if click_bytes and stem_bytes:
             stem_peaks=cached_peaks(stem_bytes),
             labels=bar_labels,
             beats=analysis.get("beat_times") or [],
+            subdivs=analysis.get("subdivs") or [],
+            subdiv_ratings={
+                int(k): v for k, v in (analysis.get("subdiv_ratings") or {}).items()
+            },
         )
     else:
         st.warning("Stem is too large to embed in the score player. Use the audio control below.")
@@ -211,6 +246,10 @@ if click_bytes and stem_bytes:
     )
     if analysis.get("sound_path"):
         st.caption(f"XSC SoundFileName: `{analysis['sound_path']}`")
+    st.caption(
+        f"Instrument band: {analysis.get('band_name', 'bass')} "
+        f"({analysis.get('fmin', 40):.0f}–{analysis.get('fmax', 400):.0f} Hz)"
+    )
 
     fig, axes = plt.subplots(2, 1, figsize=(12, 4), sharex=True)
     if click is not None:

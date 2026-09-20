@@ -8,6 +8,11 @@ from scipy.signal import stft
 # Bump this when matcher behavior changes so Streamlit's analyze cache invalidates.
 MATCHER_VERSION = 2
 
+BAND_PRESETS = {
+    "bass": (40.0, 400.0),
+    "guitar": (80.0, 2500.0),
+}
+
 
 def _mono(y: np.ndarray) -> np.ndarray:
     if y.ndim == 2:
@@ -21,6 +26,25 @@ def _stft_mag(y: np.ndarray, sr: int, n_fft: int, hop: int) -> tuple[np.ndarray,
         y = np.pad(y, (0, n_fft - y.size))
     freqs, _, zxx = stft(y, fs=sr, nperseg=n_fft, noverlap=n_fft - hop, boundary=None)
     return freqs, np.abs(zxx)
+
+
+def spectral_median_hz(y: np.ndarray, sr: int) -> float:
+    """Frequency at 50% of mean spectral energy (first ~40s)."""
+    y = _mono(y)
+    n = min(y.size, int(sr * 40))
+    freqs, mag = _stft_mag(y[:n], sr, n_fft=4096, hop=1024)
+    energy = np.mean(mag, axis=1) + 1e-12
+    cdf = np.cumsum(energy)
+    cdf /= cdf[-1]
+    return float(freqs[min(int(np.searchsorted(cdf, 0.5)), freqs.size - 1)])
+
+
+def detect_band(y: np.ndarray, sr: int) -> tuple[str, float, float]:
+    """Guess bass vs guitar from where the spectrum's energy sits."""
+    median = spectral_median_hz(y, sr)
+    name = "bass" if median < 280.0 else "guitar"
+    fmin, fmax = BAND_PRESETS[name]
+    return name, fmin, fmax
 
 
 def chroma_mean(y: np.ndarray, sr: int, n_fft: int = 2048, hop: int = 512) -> np.ndarray:
@@ -63,7 +87,7 @@ def bass_logspec(
     fmin: float = 40.0,
     fmax: float = 400.0,
 ) -> np.ndarray:
-    """Time-normalized log-frequency spectrogram in the bass range, as a unit vector."""
+    """Time-normalized log-frequency spectrogram in an instrument band."""
     freqs, mag = _stft_mag(y, sr, n_fft, hop)
     fmax = min(fmax, sr / 2.0 - 1.0)
     mask = (freqs >= fmin) & (freqs <= fmax)
@@ -95,14 +119,24 @@ def rms_level(y: np.ndarray) -> float:
     return float(np.sqrt(np.mean(y * y)))
 
 
-def measure_features(y: np.ndarray, sr: int) -> np.ndarray:
-    return np.concatenate([bass_logspec(y, sr), amplitude_shape(y)])
+def measure_features(
+    y: np.ndarray,
+    sr: int,
+    fmin: float = 40.0,
+    fmax: float = 400.0,
+) -> np.ndarray:
+    return np.concatenate([bass_logspec(y, sr, fmin=fmin, fmax=fmax), amplitude_shape(y)])
 
 
-def feature_matrix(slices: list[np.ndarray], sr: int) -> np.ndarray:
+def feature_matrix(
+    slices: list[np.ndarray],
+    sr: int,
+    fmin: float = 40.0,
+    fmax: float = 400.0,
+) -> np.ndarray:
     if not slices:
         return np.zeros((0, 0), dtype=np.float64)
-    rows = [measure_features(chunk, sr) for chunk in slices]
+    rows = [measure_features(chunk, sr, fmin=fmin, fmax=fmax) for chunk in slices]
     return np.vstack(rows)
 
 
@@ -124,20 +158,17 @@ def slice_similarity_matrix(
     envelope_weight: float = 0.3,
     min_duration_ratio: float = 0.85,
     chroma_weight: float | None = None,
+    fmin: float = 40.0,
+    fmax: float = 400.0,
 ) -> np.ndarray:
-    """Match bars by bass spectrogram shape, with envelope as a secondary cue.
-
-    Mean chroma / STFT-peak pitch is a poor fit for DI bass: harmonics jump
-    octave-to-octave across takes of the same riff. Duration is gated so a
-    2-beat bar cannot match a 4-beat bar.
-    """
+    """Match bars by spectrogram shape in an instrument band, plus envelope."""
     n = len(slices)
     if n == 0:
         return np.zeros((0, 0), dtype=np.float64)
     if chroma_weight is not None:
         envelope_weight = float(chroma_weight)
 
-    specs = np.vstack([bass_logspec(chunk, sr) for chunk in slices])
+    specs = np.vstack([bass_logspec(chunk, sr, fmin=fmin, fmax=fmax) for chunk in slices])
     spec_sim = np.clip(specs @ specs.T, 0.0, 1.0)
     np.fill_diagonal(spec_sim, 1.0)
 
@@ -159,6 +190,60 @@ def slice_similarity_matrix(
         sim[:, silent] = 0.0
     np.fill_diagonal(sim, 1.0)
     return np.clip(sim, 0.0, 1.0)
+
+
+def split_equal(y: np.ndarray, n: int) -> list[np.ndarray]:
+    count = max(1, int(n))
+    length = int(y.shape[0])
+    parts: list[np.ndarray] = []
+    for k in range(count):
+        start = int(round(k * length / count))
+        stop = int(round((k + 1) * length / count))
+        if stop <= start:
+            stop = min(length, start + 1)
+        parts.append(y[start:stop])
+    return parts
+
+
+def chunk_similarity(
+    a: np.ndarray,
+    b: np.ndarray,
+    sr: int,
+    fmin: float = 40.0,
+    fmax: float = 400.0,
+) -> float:
+    """Same-music rating for one beat in the active instrument band."""
+    if a.size == 0 or b.size == 0:
+        return 0.0
+    va = bass_logspec(a, sr, n_time=8, n_bins=24, n_fft=2048, hop=256, fmin=fmin, fmax=fmax)
+    vb = bass_logspec(b, sr, n_time=8, n_bins=24, n_fft=2048, hop=256, fmin=fmin, fmax=fmax)
+    return float(np.clip(va @ vb, 0.0, 1.0))
+
+
+def group_subdiv_ratings(
+    slices: list[np.ndarray],
+    sr: int,
+    groups: list[list[int]],
+    subdivs: list[int],
+    fmin: float = 40.0,
+    fmax: float = 400.0,
+) -> dict[int, list[float]]:
+    """Per-beat confidence of each grouped bar against the first bar in its group."""
+    ratings: dict[int, list[float]] = {}
+    for group in groups:
+        if not group:
+            continue
+        truth = group[0]
+        n = max(1, subdivs[truth] if truth < len(subdivs) else 4)
+        truth_parts = split_equal(slices[truth], n)
+        ratings[truth] = [1.0] * n
+        for idx in group[1:]:
+            parts = split_equal(slices[idx], n)
+            ratings[idx] = [
+                chunk_similarity(t_part, o_part, sr, fmin=fmin, fmax=fmax)
+                for t_part, o_part in zip(truth_parts, parts)
+            ]
+    return ratings
 
 
 def group_matches(sim: np.ndarray, threshold: float = 0.85) -> list[list[int]]:
