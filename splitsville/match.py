@@ -119,6 +119,20 @@ def rms_level(y: np.ndarray) -> float:
     return float(np.sqrt(np.mean(y * y)))
 
 
+def silent_flags(
+    slices: list[np.ndarray],
+    abs_thresh: float = 1e-4,
+    relative: float = 0.04,
+) -> list[bool]:
+    """True when a slice is digital silence or far quieter than the loudest bar."""
+    rms = np.array([rms_level(chunk) for chunk in slices], dtype=np.float64)
+    if rms.size == 0:
+        return []
+    peak = float(np.max(rms))
+    thresh = max(float(abs_thresh), peak * float(relative))
+    return (rms < thresh).tolist()
+
+
 def measure_features(
     y: np.ndarray,
     sr: int,
@@ -184,7 +198,7 @@ def slice_similarity_matrix(
     ratio = np.divide(shortest, longest, out=np.ones((n, n)), where=longest > 1e-9)
     sim = np.where(ratio >= min_duration_ratio, sim, 0.0)
 
-    silent = np.array([rms_level(chunk) < 1e-4 for chunk in slices])
+    silent = np.array(silent_flags(slices), dtype=bool)
     if np.any(silent):
         sim[silent, :] = 0.0
         sim[:, silent] = 0.0

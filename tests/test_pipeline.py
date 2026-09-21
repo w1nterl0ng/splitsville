@@ -46,6 +46,18 @@ def test_matching_groups_repeated_chords():
     assert grouped == expected
 
 
+def test_silent_flags_marks_empty_bar():
+    from splitsville.match import silent_flags
+
+    sr = 22050
+    t = np.arange(int(sr * 0.8)) / sr
+    tone = (0.2 * np.sin(2 * np.pi * 110 * t)).astype(np.float32).reshape(-1, 1)
+    rest = np.zeros_like(tone)
+    hush = (1e-6 * np.sin(2 * np.pi * 110 * t)).astype(np.float32).reshape(-1, 1)
+    flags = silent_flags([tone, rest, hush, tone])
+    assert flags == [False, True, True, False]
+
+
 def test_duration_gate_rejects_short_bar():
     click, stem, sr, sequence = make_demo()
     duration = stem.shape[0] / sr
@@ -88,6 +100,27 @@ def test_detect_band_low_vs_high_tone():
     assert bmax <= 400
     assert gname == "guitar"
     assert gmax >= 2000
+
+
+def test_pipeline_reports_silent_bar():
+    click, stem, sr, sequence = make_demo()
+    bar = stem.size // len(sequence)
+    stem = stem.copy()
+    stem[3 * bar : 4 * bar] = 0
+    import soundfile as sf
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        click_path = d / "click.wav"
+        stem_path = d / "stem.wav"
+        sf.write(click_path, click, sr)
+        sf.write(stem_path, stem, sr)
+        result = run_pipeline(click_path, stem_path)
+    assert len(result.silent) == len(sequence)
+    assert result.silent[3] is True
+    assert result.silent[0] is False
 
 
 def test_pipeline_writes_slices(tmp_path: Path):

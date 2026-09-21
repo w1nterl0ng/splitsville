@@ -3,6 +3,7 @@ import json
 from splitsville.project import (
     FORMAT,
     apply_lock_map,
+    clear_locks,
     load_any,
     loads,
     measure_meta_list,
@@ -53,3 +54,15 @@ def test_bare_json_load_and_lock_merge():
     assert merged[1]["notes"] == "ok"
     assert merged[1]["label"] == "B"
     assert merged[0]["locked"] is False
+
+
+def test_clear_locks_resets_done_without_dropping_notes():
+    rows = measure_meta_list(2, ["A", "B"])
+    rows[0]["locked"] = True
+    rows[0]["status"] = "done"
+    rows[0]["notes"] = "keep me"
+    cleared = clear_locks(rows)
+    assert cleared[0]["locked"] is False
+    assert cleared[0]["status"] == "open"
+    assert cleared[0]["notes"] == "keep me"
+    assert cleared[1]["locked"] is False

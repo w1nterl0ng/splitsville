@@ -10,6 +10,7 @@ import streamlit as st
 from splitsville.pipeline import run_pipeline
 from splitsville.project import (
     apply_lock_map,
+    clear_locks,
     load_any,
     measure_meta_list,
     meta_by_index,
@@ -17,12 +18,13 @@ from splitsville.project import (
     pack_zip,
 )
 from splitsville.score import render_score, sniff_mime
-from splitsville.split import load_audio
+from splitsville.match import silent_flags
+from splitsville.split import load_audio, slice_stem
 from splitsville.waveform import peak_envelope
 from splitsville.xsc import looks_like_xsc, parse_xsc
 
 MAX_EMBED_AUDIO = 15_000_000
-MATCHER_VERSION = 6
+MATCHER_VERSION = 7
 
 
 st.set_page_config(page_title="Splitsville", layout="wide")
@@ -42,6 +44,8 @@ with st.sidebar:
         type=["splitsville", "zip", "json"],
         help="A .splitsville zip is self-contained (markers + stem + metadata).",
     )
+    if st.button("Clear all done", width="stretch", help="Reset every measure so none are marked done."):
+        st.session_state["clear_all_done"] = True
     st.header("Detection")
     min_interval = st.slider("Min measure length (s)", 0.3, 3.0, 0.6, 0.05)
     click_threshold = st.slider("Click threshold", 0.05, 0.8, 0.25, 0.01)
@@ -109,6 +113,7 @@ def analyze(
         "band_name": result.band_name,
         "fmin": result.fmin,
         "fmax": result.fmax,
+        "silent": list(result.silent),
     }
 
 
@@ -201,6 +206,7 @@ if stem_file is not None:
     st.session_state["stem_bytes"] = raw
     st.session_state["stem_play_bytes"] = raw
     st.session_state["stem_source_name"] = stem_file.name
+    st.caption(f"Stem from upload: `{stem_file.name}`")
 
 click_bytes = st.session_state.get("click_bytes")
 stem_bytes = st.session_state.get("stem_bytes")
@@ -238,8 +244,17 @@ if click_bytes and stem_bytes:
     if isinstance(prev, dict) and prev.get("measure_meta"):
         rows = apply_lock_map(rows, prev["measure_meta"])
         st.session_state["measure_rows"] = rows
+    if st.session_state.pop("clear_all_done", False):
+        rows = clear_locks(rows)
+        st.session_state["measure_rows"] = rows
+        if isinstance(prev, dict):
+            st.session_state["score_player"] = {**prev, "measure_meta": meta_by_index(rows)}
 
     stem, stem_sr = cached_load(stem_bytes)
+    silent = list(analysis.get("silent") or [])
+    if len(silent) != n:
+        silent = silent_flags(slice_stem(stem, stem_sr, measures))
+        analysis["silent"] = silent
     if looks_like_xsc(click_bytes):
         click = None
         click_sr = analysis["click_sr"]
@@ -249,11 +264,13 @@ if click_bytes and stem_bytes:
         click_peaks = cached_peaks(click_bytes)
 
     done_n = sum(1 for r in rows if r.get("locked"))
+    rest_n = sum(1 for v in silent if v)
     st.subheader("Score")
     st.caption(
         "Each cell is a measure. Matching groups share a color. "
         "Click a cell to play. Mark **done** on the right when that bar is finished in Guitar Pro. "
-        f"{done_n}/{n} done."
+        f"{done_n}/{n} done. {rest_n} silent rest{'s' if rest_n != 1 else ''}. "
+        f"Playing: `{st.session_state.get('stem_source_name') or 'stem'}`."
     )
     if play_bytes and len(play_bytes) <= MAX_EMBED_AUDIO:
         render_score(
@@ -270,6 +287,7 @@ if click_bytes and stem_bytes:
             subdiv_ratings={
                 int(k): v for k, v in (analysis.get("subdiv_ratings") or {}).items()
             },
+            silent=silent,
             measure_meta=meta_by_index(rows),
             key="score_player",
         )

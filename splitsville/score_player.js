@@ -10,11 +10,38 @@ function boot(component) {
   const root = component.parentElement;
   if (!root || typeof root.querySelector !== "function") return;
   const incoming = component.data || {};
+
+  function audioSig(d) {
+    const a = (d && d.audio) || "";
+    if (!a) return "";
+    const mid = Math.floor(a.length / 2);
+    return (d.mime || "") + ":" + a.length + ":" + a.slice(0, 48) + ":" + a.slice(mid, mid + 48);
+  }
+
+  function applyIncomingAudio(d) {
+    if (!d || !d.audio) return;
+    const sig = audioSig(d);
+    if (root.__svAudioSig === sig) return;
+    root.__svAudioSig = sig;
+    const el = root.querySelector("#player");
+    if (!el) return;
+    el.pause();
+    el.src = "data:" + d.mime + ";base64," + d.audio;
+    try { el.load(); } catch (e) { /* ignore */ }
+  }
+
   if (root.__svReady) {
     if (incoming.measure_meta) root.__svApplyMeta(incoming.measure_meta);
+    if (incoming.payload && root.__svData) {
+      Object.keys(root.__svData).forEach((k) => delete root.__svData[k]);
+      Object.assign(root.__svData, incoming.payload);
+    }
+    applyIncomingAudio(incoming);
+    if (typeof root.__svRender === "function") root.__svRender();
     return;
   }
   const data = incoming.payload;
+  if (data) root.__svData = data;
   const measureMeta = Object.assign({}, incoming.measure_meta || {});
   root.__svApplyMeta = (next) => {
     Object.keys(measureMeta).forEach((k) => delete measureMeta[k]);
@@ -25,10 +52,28 @@ function boot(component) {
     const el = root.querySelector("#player");
     if (el) el.src = "data:" + incoming.mime + ";base64," + incoming.audio;
   }
-  function isLocked(i) {
-    const row = measureMeta[String(i)];
-    return !!(row && row.locked);
-  }
+    function isSilent(i) {
+      return !!(data.silent && data.silent[i]);
+    }
+    function isLocked(i) {
+      const row = measureMeta[String(i)];
+      return !!(row && row.locked);
+    }
+    function clearAllDone() {
+      for (let i = 0; i < data.n; i++) {
+        const key = String(i);
+        const row = Object.assign(
+          { locked: false, status: "open", notes: "", tags: [], meta: {} },
+          measureMeta[key] || {}
+        );
+        row.locked = false;
+        row.status = "open";
+        measureMeta[key] = row;
+      }
+      component.setStateValue("measure_meta", Object.assign({}, measureMeta));
+      status.textContent = "Cleared all done marks.";
+      render();
+    }
   function phraseLocked(start, n) {
     for (let k = 0; k < n; k++) if (!isLocked(start + k)) return false;
     return n > 0;
@@ -57,6 +102,7 @@ function boot(component) {
     const shell = root.querySelector(".sv-root");
     if (!score || !player || !widthSel || !data || !shell) return;
     root.__svReady = true;
+    root.__svAudioSig = audioSig(incoming);
     function barLabel(i) {
       const labels = data.labels || [];
       return labels[i] || String(i + 1);
@@ -282,17 +328,22 @@ function boot(component) {
         btn.className = "cell";
         btn.dataset.i = String(i);
         const gi = data.groupOf[String(i)];
-        if (gi === undefined) {
+        const rest = isSilent(i);
+        if (rest) {
+          btn.classList.add("rest");
+        } else if (gi === undefined) {
           btn.classList.add("ungrouped");
         } else {
           btn.style.background = data.colors[gi % data.colors.length];
         }
-        const gLabel = gi === undefined ? "" : `<span class="g">G${gi + 1}</span>`;
+        const gLabel = rest
+          ? `<span class="restmark"><span class="whole-rest" aria-hidden="true"></span>rest</span>`
+          : gi === undefined ? "" : `<span class="g">G${gi + 1}</span>`;
         const done = isLocked(i) ? `<span class="done">done</span>` : "";
         btn.innerHTML = `${barLabel(i)}${gLabel}${done}`;
         if (isLocked(i)) btn.classList.add("locked");
         btn.title = `Bar ${barLabel(i)}  ${data.starts[i].toFixed(2)}s` +
-          (gi === undefined ? "" : `  group ${gi + 1}`) +
+          (rest ? "  rest" : gi === undefined ? "" : `  group ${gi + 1}`) +
           (isLocked(i) ? "  done" : "");
         btn.addEventListener("click", () => playFrom(i, false, autoplayOn()));
         score.appendChild(btn);
@@ -372,7 +423,7 @@ function boot(component) {
         ? "Each cell is a beat. Green matches the first bar in the group. Done marks a bar finished in Guitar Pro."
         : "Each row is the same " + n + " groups in a row. Green matches the first time that phrase appears. Done locks every bar in the row.";
       const listening = player.paused ? panelAnchor : currentBar();
-      let html = `<h3>${title}</h3><p class="hint">${hint}</p>`;
+      let html = `<div class="matches-head"><h3>${title}</h3><button type="button" class="cleardone" id="clearDone">Clear done</button></div><p class="hint">${hint}</p>`;
       for (const start of starts) {
         const isTruth = start === truthStart;
         const on = listening >= start && listening < start + n;
@@ -382,6 +433,7 @@ function boot(component) {
         html += `<div class="mrow${on ? " listening" : ""}${locked ? " locked" : ""}" data-i="${start}">`;
         html += `<div class="mlabel"><span>${rowLabel.join("–")}</span><span class="mlabel-right">`;
         html += isTruth ? '<span class="truth">reference</span>' : "";
+        if (n === 1 && isSilent(start)) html += '<span class="rest-tag">rest</span>';
         html += `<button type="button" class="lockbtn" data-lock="${start}">${locked ? "Done" : "Mark done"}</button>`;
         html += `</span></div>`;
         html += `<div class="phrase">`;
@@ -393,6 +445,13 @@ function boot(component) {
         html += `</div></div>`;
       }
       matches.innerHTML = html;
+      const clearBtn = matches.querySelector("#clearDone");
+      if (clearBtn) {
+        clearBtn.addEventListener("click", (event) => {
+          event.stopPropagation();
+          clearAllDone();
+        });
+      }
       for (const row of matches.querySelectorAll(".mrow")) {
         row.addEventListener("click", () => playFrom(Number(row.dataset.i), true, true));
       }
@@ -682,4 +741,5 @@ function boot(component) {
     }
     render();
     requestAnimationFrame(tick);
+    root.__svRender = render;
 }

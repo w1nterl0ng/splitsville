@@ -12,6 +12,7 @@ from .match import (
     feature_matrix,
     group_matches,
     group_subdiv_ratings,
+    silent_flags,
     slice_similarity_matrix,
 )
 from .split import load_audio, slice_stem, write_slices
@@ -39,6 +40,7 @@ class PipelineResult:
     band_name: str = "bass"
     fmin: float = 40.0
     fmax: float = 400.0
+    silent: list[bool] = field(default_factory=list)
     slice_paths: list[Path] = field(default_factory=list)
 
 
@@ -110,6 +112,7 @@ def run_pipeline(
     features = feature_matrix(slices, stem_sr, fmin=fmin, fmax=fmax)
     similarity = slice_similarity_matrix(slices, stem_sr, fmin=fmin, fmax=fmax)
     groups = group_matches(similarity, threshold=match_threshold)
+    silent = silent_flags(slices)
     subdiv_ratings = group_subdiv_ratings(
         slices, stem_sr, groups, subdivs, fmin=fmin, fmax=fmax
     )
@@ -137,5 +140,6 @@ def run_pipeline(
         band_name=band_name,
         fmin=fmin,
         fmax=fmax,
+        silent=silent,
         slice_paths=slice_paths,
     )

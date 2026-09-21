@@ -58,6 +58,16 @@ def meta_by_index(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {str(i): dict(row) for i, row in enumerate(rows)}
 
 
+def clear_locks(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reset every measure to not done, keeping notes/tags/extra keys."""
+    out = [dict(r) for r in rows]
+    for row in out:
+        row["locked"] = False
+        if row.get("status") == "done":
+            row["status"] = "open"
+    return out
+
+
 def apply_lock_map(
     rows: list[dict[str, Any]],
     locked: dict[str, Any] | None,

@@ -93,7 +93,22 @@ _CSS = r"""
     background: rgba(255,255,255,0.04);
     box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
   }
-  .matches h3 { margin: 0 0 4px 0; font-size: 13px; font-weight: 650; }
+  .matches-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 4px 0;
+  }
+  .matches h3 { margin: 0; font-size: 13px; font-weight: 650; flex: 1; min-width: 0; }
+  .cleardone {
+    font-size: 11px;
+    font-weight: 650;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
   .matches .hint { margin: 0 0 8px 0; font-size: 11px; opacity: 0.7; line-height: 1.3; }
   .mrow {
     margin: 0 0 7px 0;
@@ -159,6 +174,30 @@ _CSS = r"""
     box-shadow: inset 0 0 0 2px #d4d4d8;
   }
   .cell .done { font-size: 9px; font-weight: 700; letter-spacing: 0.04em; opacity: 0.85; }
+  .cell.rest {
+    background: #3a3a44 !important;
+    color: #d4d4d8;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14);
+  }
+  .cell.rest .restmark {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    opacity: 0.92;
+  }
+  .whole-rest {
+    width: 13px;
+    height: 6px;
+    margin-top: 3px;
+    background: currentColor;
+    border-radius: 1px;
+    box-shadow: 0 -6px 0 -3.5px currentColor;
+  }
+  .mrow .rest-tag { font-size: 10px; font-weight: 650; opacity: 0.7; }
 """
 
 _HTML = r"""
@@ -196,11 +235,11 @@ _HTML = r"""
       </select>
     </label>
     <label class="autoplay">
-      <input type="checkbox" id="autoplay">
+      <input type="checkbox" id="autoplay" checked>
       Auto-play
     </label>
     <button id="stop" type="button">Stop</button>
-    <span class="status" id="status">Click a bar to select it. Enable Auto-play to hear the main grid. The match panel on the right always plays. Drag on the wave to loop. <kbd>Space</kbd> pause/resume. <kbd>Esc</kbd> clears the loop. Keys <kbd>0</kbd>–<kbd>9</kbd> set stop-after. Mark done when the bar is finished in Guitar Pro.</span>
+    <span class="status" id="status">Click a bar to play. Uncheck Auto-play to select on the grid without sound. The match panel on the right always plays. Drag on the wave to loop. <kbd>Space</kbd> pause/resume. <kbd>Esc</kbd> clears the loop. Keys <kbd>0</kbd>–<kbd>9</kbd> set stop-after. Silent bars show as rests. Mark done when the bar is finished in Guitar Pro.</span>
   </div>
   <div class="wave-wrap"><canvas id="wave"></canvas></div>
   <div class="body">
@@ -213,7 +252,7 @@ _HTML = r"""
 
 # Prefix so Streamlit's inline-JS hash changes when the player script does.
 _JS = (
-    "/* splitsville-score-js v5 */\n"
+    "/* splitsville-score-js v8 */\n"
     + Path(__file__).with_name("score_player.js").read_text()
 )
 
@@ -238,6 +277,7 @@ def render_score(
     beats: list[float] | None = None,
     subdivs: list[int] | None = None,
     subdiv_ratings: dict[int, list[float]] | None = None,
+    silent: list[bool] | None = None,
     measure_meta: dict[str, dict] | None = None,
     key: str = "score_player",
     on_measure_meta_change: Callable[[], None] | None = None,
@@ -271,6 +311,7 @@ def render_score(
             str(idx): [float(v) for v in vals]
             for idx, vals in (subdiv_ratings or {}).items()
         },
+        "silent": [bool(v) for v in (silent or [])],
     }
     meta = {str(k): dict(v) for k, v in (measure_meta or {}).items()}
     if on_measure_meta_change is None:
