@@ -52,6 +52,7 @@ function boot(component) {
     const widthSel = root.querySelector("#width");
     const stopAfterSel = root.querySelector("#stopAfter");
     const speedSel = root.querySelector("#speed");
+    const autoplayEl = root.querySelector("#autoplay");
     const status = root.querySelector("#status");
     const shell = root.querySelector(".sv-root");
     if (!score || !player || !widthSel || !data || !shell) return;
@@ -293,7 +294,7 @@ function boot(component) {
         btn.title = `Bar ${barLabel(i)}  ${data.starts[i].toFixed(2)}s` +
           (gi === undefined ? "" : `  group ${gi + 1}`) +
           (isLocked(i) ? "  done" : "");
-        btn.addEventListener("click", () => playFrom(i));
+        btn.addEventListener("click", () => playFrom(i, false, autoplayOn()));
         score.appendChild(btn);
       }
       renderMatchPanel();
@@ -393,7 +394,7 @@ function boot(component) {
       }
       matches.innerHTML = html;
       for (const row of matches.querySelectorAll(".mrow")) {
-        row.addEventListener("click", () => playFrom(Number(row.dataset.i), true));
+        row.addEventListener("click", () => playFrom(Number(row.dataset.i), true, true));
       }
       for (const btn of matches.querySelectorAll(".lockbtn")) {
         btn.addEventListener("click", (event) => {
@@ -403,15 +404,24 @@ function boot(component) {
       }
     }
 
-    function playFrom(i, keepPanel) {
+    function autoplayOn() {
+      return !!(autoplayEl && autoplayEl.checked);
+    }
+
+    function playFrom(i, keepPanel, shouldPlay) {
+      if (shouldPlay === undefined) shouldPlay = true;
       loop = null;
       playStart = i;
       viewOrigin = i;
       if (!keepPanel) panelAnchor = i;
-      stopTime = stopTimeFrom(i);
-      player.currentTime = Math.max(0, data.starts[i] + 0.001);
-      player.play();
-      status.textContent = describePlay(i);
+      stopTime = shouldPlay ? stopTimeFrom(i) : null;
+      if (shouldPlay) {
+        player.currentTime = Math.max(0, data.starts[i] + 0.001);
+        player.play();
+        status.textContent = describePlay(i);
+      } else {
+        status.textContent = `Selected ${barLabel(i)}. Enable Auto-play to hear grid clicks.`;
+      }
       renderMatchPanel();
       highlight();
       drawWave();
@@ -491,6 +501,7 @@ function boot(component) {
       for (const btn of score.querySelectorAll(".cell")) {
         const i = Number(btn.dataset.i);
         btn.classList.toggle("playing", i === idx);
+        btn.classList.toggle("selected", i === panelAnchor);
         btn.classList.toggle("locked", isLocked(i));
       }
       const listening = idx < 0 ? panelAnchor : idx;

@@ -24,7 +24,7 @@ Open [http://localhost:8501](http://localhost:8501). After changing the score pl
 
 1. **Markers** — upload a Transcribe `.xsc`. If `SoundFileName` / `SoundFileInfo` points at a file on disk, the stem is loaded automatically. Otherwise upload a click track (WAV/FLAC/MP3) and a stem.
 2. **Match** — bars that sound alike share a color. Sidebar: min measure length, click threshold, match threshold, and instrument band (Auto / Bass / Guitar). Auto guesses from the stem spectrum.
-3. **Listen** — click a cell to play from that bar. Waveform drag loops like Logic. `Space` pause/resume, `Esc` clears the loop, `0`–`9` set stop-after N measures. Speed is 50–120% in the browser (`playbackRate`, pitch preserved).
+3. **Listen** — Auto-play is off by default so clicking the main grid only selects a bar (right panel updates, no sound). Turn **Auto-play** on to hear grid clicks. The match panel on the right always plays. Waveform drag loops like Logic. `Space` pause/resume, `Esc` clears the loop, `0`–`9` set stop-after N measures. Speed is 50–120% in the browser (`playbackRate`, pitch preserved).
 4. **Guitar Pro** — on the right, **Mark done** greys that bar on the grid so you can track what is already notated.
 5. **Save / open** — **Save session** downloads a `.splitsville` zip (markers, stem, matching, per-measure metadata). Open it from the sidebar later without re-importing.
 

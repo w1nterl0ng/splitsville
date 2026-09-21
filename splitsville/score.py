@@ -148,6 +148,9 @@ _CSS = r"""
     box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25);
   }
   .cell.ungrouped { background: #4b4b55; color: #eee; }
+  .autoplay { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .autoplay input { margin: 0; }
+  .cell.selected { outline: 2px dashed rgba(255, 255, 255, 0.45); outline-offset: 1px; }
   .cell.playing { outline: 2px solid #fff; outline-offset: 1px; filter: brightness(1.12); }
   .cell .g { font-size: 10px; font-weight: 500; opacity: 0.8; }
   .cell.locked {
@@ -192,8 +195,12 @@ _HTML = r"""
         <option value="1.2">120%</option>
       </select>
     </label>
+    <label class="autoplay">
+      <input type="checkbox" id="autoplay">
+      Auto-play
+    </label>
     <button id="stop" type="button">Stop</button>
-    <span class="status" id="status">Click a bar to play. Drag on the wave to loop. <kbd>Space</kbd> pause/resume. <kbd>Esc</kbd> clears the loop. Keys <kbd>0</kbd>–<kbd>9</kbd> set stop-after. Mark done when the bar is finished in Guitar Pro.</span>
+    <span class="status" id="status">Click a bar to select it. Enable Auto-play to hear the main grid. The match panel on the right always plays. Drag on the wave to loop. <kbd>Space</kbd> pause/resume. <kbd>Esc</kbd> clears the loop. Keys <kbd>0</kbd>–<kbd>9</kbd> set stop-after. Mark done when the bar is finished in Guitar Pro.</span>
   </div>
   <div class="wave-wrap"><canvas id="wave"></canvas></div>
   <div class="body">
@@ -206,7 +213,7 @@ _HTML = r"""
 
 # Prefix so Streamlit's inline-JS hash changes when the player script does.
 _JS = (
-    "/* splitsville-score-js v4 */\n"
+    "/* splitsville-score-js v5 */\n"
     + Path(__file__).with_name("score_player.js").read_text()
 )
 
