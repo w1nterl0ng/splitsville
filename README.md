@@ -20,6 +20,16 @@ streamlit run app.py
 
 Open [http://localhost:8501](http://localhost:8501). After changing the score player (`splitsville/score.py` or `splitsville/score_player.js`), **restart** Streamlit; a browser refresh is not enough for that custom component.
 
+## Deploy to Streamlit Community Cloud
+
+The repo is already set up for [Community Cloud](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app): `app.py` is the entrypoint, `requirements.txt` lists Python packages, and `packages.txt` installs `ffmpeg` (MP3) plus `libsndfile1` (WAV/FLAC via soundfile).
+
+1. Sign in at [share.streamlit.io](https://share.streamlit.io) with GitHub.
+2. **Create app**, then set repository `w1nterl0ng/splitsville`, branch `main`, main file `app.py`, Python 3.11+.
+3. **Deploy**. The app URL will be `https://<name>.streamlit.app`. Pushes to `main` redeploy automatically.
+
+On Cloud, an `.xsc` cannot pull a stem from a path on your Mac. Upload the stem (or a `.splitsville` session) in the app. Large stems may hit the free-tier memory limit or the in-browser player size cap.
+
 ## Workflow
 
 1. **Markers** — upload a Transcribe `.xsc`. If `SoundFileName` / `SoundFileInfo` points at a file on disk, the stem is loaded automatically. Otherwise upload a click track (WAV/FLAC/MP3) and a stem.
