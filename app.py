@@ -8,40 +8,40 @@ import numpy as np
 import streamlit as st
 
 from splitsville.pipeline import run_pipeline
+from splitsville.project import (
+    apply_lock_map,
+    load_any,
+    measure_meta_list,
+    meta_by_index,
+    new_document,
+    pack_zip,
+)
 from splitsville.score import render_score, sniff_mime
 from splitsville.split import load_audio
-from splitsville.synth import make_demo
 from splitsville.waveform import peak_envelope
 from splitsville.xsc import looks_like_xsc, parse_xsc
 
-FIRE_XSC = Path(
-    "/Users/fredanderson/Music/Logic/Fire-Delusion-05-Incantation/Bounces/"
-    "Fire-Delusion-05-Incantation-mix-for-transcribe.xsc"
-)
-FIRE_CLICK = Path(
-    "/Users/fredanderson/Music/Logic/fire-test-05/Bounces/"
-    "fire-test-05-bass-di-gain-click-measures.mp3"
-)
-FIRE_STEM = Path(
-    "/Users/fredanderson/Music/Logic/fire-test-05/Bounces/"
-    "fire-test-05-bass-di-gain.mp3"
-)
-FIRE_GUITAR = Path(
-    "/Users/fredanderson/Music/Logic/fire-test-05/Bounces/"
-    "fire-test-05-g1-l-gain.mp3"
-)
-
 MAX_EMBED_AUDIO = 15_000_000
+MATCHER_VERSION = 6
 
 
-st.set_page_config(page_title="Splitsville POC", layout="wide")
+st.set_page_config(page_title="Splitsville", layout="wide")
+if "pending_project_name" in st.session_state:
+    st.session_state["project_name"] = st.session_state.pop("pending_project_name")
 st.title("Splitsville")
 st.caption(
-    "Load Transcribe .xsc markers or a click track, split a stem at those bars, "
-    "then group matching measures."
+    "Open a saved session, or load Transcribe markers plus a stem. "
+    "Matching groups live in the score; mark a bar done when it is finished in Guitar Pro."
 )
 
 with st.sidebar:
+    st.header("Session")
+    project_name = st.text_input("Name", value="Untitled", key="project_name")
+    project_file = st.file_uploader(
+        "Open session",
+        type=["splitsville", "zip", "json"],
+        help="A .splitsville zip is self-contained (markers + stem + metadata).",
+    )
     st.header("Detection")
     min_interval = st.slider("Min measure length (s)", 0.3, 3.0, 0.6, 0.05)
     click_threshold = st.slider("Click threshold", 0.05, 0.8, 0.25, 0.01)
@@ -53,9 +53,6 @@ with st.sidebar:
         required=True,
         help="Auto guesses from the stem spectrum. Override if the guess is wrong.",
     )
-    use_demo = st.button("Load synthetic demo", width="stretch")
-    use_fire = st.button("Load fire-test-05 bass", width="stretch")
-    use_guitar = st.button("Load fire-test-05 guitar", width="stretch")
 
 
 def _wav_bytes(audio: np.ndarray, sr: int) -> bytes:
@@ -66,6 +63,16 @@ def _wav_bytes(audio: np.ndarray, sr: int) -> bytes:
     return buf.getvalue()
 
 
+def _settings() -> dict:
+    return {
+        "min_interval": float(min_interval),
+        "click_threshold": float(click_threshold),
+        "match_threshold": float(match_threshold),
+        "instrument": (instrument or "Auto").lower(),
+        "matcher_version": MATCHER_VERSION,
+    }
+
+
 @st.cache_data(show_spinner="Detecting bars and matching…")
 def analyze(
     click_bytes: bytes,
@@ -73,7 +80,7 @@ def analyze(
     min_interval: float,
     click_threshold: float,
     match_threshold: float,
-    matcher_version: int = 6,
+    matcher_version: int = MATCHER_VERSION,
     instrument: str = "auto",
 ):
     result = run_pipeline(
@@ -116,64 +123,75 @@ def cached_peaks(audio_bytes: bytes):
     return peak_envelope(audio, sr)
 
 
-col_click, col_stem = st.columns(2)
-with col_click:
-    click_file = st.file_uploader(
-        "Markers or click track (XSC / WAV / FLAC / MP3)",
-        type=["xsc", "wav", "flac", "mp3"],
-    )
-with col_stem:
-    stem_file = st.file_uploader("Stem (WAV/FLAC/MP3)", type=["wav", "flac", "mp3"])
+def _restore_analysis(blob: dict) -> dict:
+    out = dict(blob)
+    if "similarity" in out:
+        out["similarity"] = np.asarray(out["similarity"])
+    if "click_times" in out:
+        out["click_times"] = np.asarray(out["click_times"], dtype=float)
+    if "measures" in out:
+        out["measures"] = [tuple(m) for m in out["measures"]]
+    ratings = out.get("subdiv_ratings") or {}
+    out["subdiv_ratings"] = {str(k): v for k, v in ratings.items()}
+    return out
+
 
 def _load_stem_path(path: Path) -> None:
     audio, sr = load_audio(path)
     st.session_state["stem_bytes"] = _wav_bytes(audio, sr)
     st.session_state["stem_play_bytes"] = Path(path).read_bytes()
+    st.session_state["stem_source_name"] = path.name
 
 
-if use_demo:
-    click, stem, sr, sequence = make_demo()
-    wav = _wav_bytes(stem, sr)
-    st.session_state["click_bytes"] = _wav_bytes(click, sr)
-    st.session_state["stem_bytes"] = wav
-    st.session_state["stem_play_bytes"] = wav
-    st.session_state["demo_sequence"] = sequence
-    st.success(f"Demo loaded: bars {''.join(sequence)} at {sr} Hz")
-
-if use_fire:
-    if FIRE_XSC.exists():
-        with st.spinner("Loading fire-test-05 from Transcribe .xsc…"):
-            st.session_state["click_bytes"] = FIRE_XSC.read_bytes()
-            doc = parse_xsc(FIRE_XSC)
-            stem_path = doc.sound_path if doc.sound_path and doc.sound_path.exists() else FIRE_STEM
-            if not stem_path.exists():
-                st.error("XSC SoundFileName was not found on disk.")
-            else:
-                _load_stem_path(stem_path)
-                st.success(f"Loaded {stem_path.name} from {FIRE_XSC.name}")
-    elif not FIRE_STEM.exists() or not FIRE_CLICK.exists():
-        st.error("No Transcribe .xsc or click-track bounce was found.")
+def _open_project(raw: bytes, filename: str) -> None:
+    doc, markers, stem = load_any(raw)
+    st.session_state["project_doc"] = doc
+    st.session_state["pending_project_name"] = doc.get("name") or Path(filename).stem
+    if markers:
+        st.session_state["click_bytes"] = markers
+        st.session_state["markers_name"] = (doc.get("sources") or {}).get("markers_name") or "markers"
+    if stem:
+        st.session_state["stem_bytes"] = stem
+        st.session_state["stem_play_bytes"] = stem
+        st.session_state["stem_source_name"] = (doc.get("sources") or {}).get("stem_name") or "stem"
+    if doc.get("measures"):
+        st.session_state["measure_rows"] = list(doc["measures"])
+    saved = doc.get("analysis") or {}
+    saved_settings = doc.get("settings") or {}
+    if saved.get("measures") and saved_settings.get("matcher_version") == MATCHER_VERSION:
+        st.session_state["saved_analysis"] = saved
+        st.session_state["saved_settings"] = saved_settings
     else:
-        with st.spinner("Loading fire-test-05…"):
-            click, csr = load_audio(FIRE_CLICK)
-            st.session_state["click_bytes"] = _wav_bytes(click, csr)
-            _load_stem_path(FIRE_STEM)
-        st.success("fire-test-05 loaded from click-track audio")
+        st.session_state.pop("saved_analysis", None)
+        st.session_state.pop("saved_settings", None)
+    st.session_state.pop("score_player", None)
 
-if use_guitar:
-    if not FIRE_GUITAR.exists():
-        st.error("fire-test-05 guitar bounce was not found.")
-    elif not FIRE_XSC.exists():
-        st.error("Transcribe .xsc was not found.")
-    else:
-        with st.spinner("Loading fire-test-05 guitar from Transcribe .xsc…"):
-            st.session_state["click_bytes"] = FIRE_XSC.read_bytes()
-            _load_stem_path(FIRE_GUITAR)
-            st.success(f"Loaded {FIRE_GUITAR.name} from {FIRE_XSC.name}")
+
+if project_file is not None:
+    digest = (project_file.name, project_file.size)
+    if st.session_state.get("project_digest") != digest:
+        try:
+            _open_project(project_file.getvalue(), project_file.name)
+            st.session_state["project_digest"] = digest
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not open session ({exc}).")
+
+col_click, col_stem = st.columns(2)
+with col_click:
+    click_file = st.file_uploader(
+        "Markers or click track (XSC / WAV / FLAC / MP3)",
+        type=["xsc", "wav", "flac", "mp3"],
+        key="markers_upload",
+    )
+with col_stem:
+    stem_file = st.file_uploader("Stem (WAV/FLAC/MP3)", type=["wav", "flac", "mp3"], key="stem_upload")
+
 
 if click_file is not None:
     st.session_state["click_bytes"] = click_file.getvalue()
-    if looks_like_xsc(st.session_state["click_bytes"]) and stem_file is None:
+    st.session_state["markers_name"] = click_file.name
+    if looks_like_xsc(st.session_state["click_bytes"]) and stem_file is None and "stem_bytes" not in st.session_state:
         doc = parse_xsc(st.session_state["click_bytes"])
         if doc.sound_path is not None and doc.sound_path.exists():
             _load_stem_path(doc.sound_path)
@@ -182,25 +200,44 @@ if stem_file is not None:
     raw = stem_file.getvalue()
     st.session_state["stem_bytes"] = raw
     st.session_state["stem_play_bytes"] = raw
+    st.session_state["stem_source_name"] = stem_file.name
 
 click_bytes = st.session_state.get("click_bytes")
 stem_bytes = st.session_state.get("stem_bytes")
 play_bytes = st.session_state.get("stem_play_bytes", stem_bytes)
 
 if click_bytes and stem_bytes:
-    analysis = analyze(
-        click_bytes,
-        stem_bytes,
-        min_interval,
-        click_threshold,
-        match_threshold,
-        6,
-        (instrument or "Auto").lower(),
-    )
+    settings = _settings()
+    saved_analysis = st.session_state.get("saved_analysis")
+    saved_settings = st.session_state.get("saved_settings")
+    if saved_analysis and saved_settings == settings:
+        analysis = _restore_analysis(saved_analysis)
+    else:
+        analysis = analyze(
+            click_bytes,
+            stem_bytes,
+            min_interval,
+            click_threshold,
+            match_threshold,
+            MATCHER_VERSION,
+            settings["instrument"],
+        )
+        st.session_state.pop("saved_analysis", None)
+
     measures = analysis["measures"]
     groups = analysis["groups"]
     click_times = analysis["click_times"]
     bar_labels = analysis.get("labels") or []
+
+    n = len(measures)
+    rows = st.session_state.get("measure_rows")
+    if not isinstance(rows, list) or len(rows) != n:
+        rows = measure_meta_list(n, bar_labels)
+        st.session_state["measure_rows"] = rows
+    prev = st.session_state.get("score_player")
+    if isinstance(prev, dict) and prev.get("measure_meta"):
+        rows = apply_lock_map(rows, prev["measure_meta"])
+        st.session_state["measure_rows"] = rows
 
     stem, stem_sr = cached_load(stem_bytes)
     if looks_like_xsc(click_bytes):
@@ -211,11 +248,12 @@ if click_bytes and stem_bytes:
         click, click_sr = cached_load(click_bytes)
         click_peaks = cached_peaks(click_bytes)
 
+    done_n = sum(1 for r in rows if r.get("locked"))
     st.subheader("Score")
     st.caption(
         "Each cell is a measure. Matching groups share a color. "
-        "Click a cell to play and to stack that group on the right. "
-        "Beat cells are rated against the first bar in the group (green = same, red = different)."
+        "Click a cell to play. Mark **done** on the right when that bar is finished in Guitar Pro. "
+        f"{done_n}/{n} done."
     )
     if play_bytes and len(play_bytes) <= MAX_EMBED_AUDIO:
         render_score(
@@ -223,7 +261,7 @@ if click_bytes and stem_bytes:
             measures=measures,
             groups=groups,
             mime=sniff_mime(play_bytes),
-            default_width=8 if len(measures) <= 8 else 16,
+            default_width=8 if n <= 8 else 16,
             click_peaks=click_peaks,
             stem_peaks=cached_peaks(stem_bytes),
             labels=bar_labels,
@@ -232,9 +270,41 @@ if click_bytes and stem_bytes:
             subdiv_ratings={
                 int(k): v for k, v in (analysis.get("subdiv_ratings") or {}).items()
             },
+            measure_meta=meta_by_index(rows),
+            key="score_player",
         )
     else:
         st.warning("Stem is too large to embed in the score player. Use the audio control below.")
+
+    zip_doc = new_document(
+        name=st.session_state.get("project_name") or project_name or "Untitled",
+        settings=settings,
+        sources={
+            "markers_path": analysis.get("sound_path"),
+        },
+        analysis=analysis,
+        measures=st.session_state["measure_rows"],
+    )
+    zip_doc["project_meta"] = (st.session_state.get("project_doc") or {}).get("project_meta") or {}
+    zip_bytes = pack_zip(
+        zip_doc,
+        markers=click_bytes,
+        stem=play_bytes or stem_bytes,
+        markers_name=st.session_state.get("markers_name") or "markers",
+        stem_name=st.session_state.get("stem_source_name") or "stem",
+    )
+    safe_name = "".join(
+        ch if ch.isalnum() or ch in "-_." else "-"
+        for ch in (st.session_state.get("project_name") or "splitsville")
+    )
+    st.download_button(
+        "Save session",
+        data=zip_bytes,
+        file_name=f"{safe_name}.splitsville",
+        mime="application/zip",
+        width="stretch",
+        help="Zip of markers, stem, matching, and per-measure metadata (done/locked, notes, tags, extra).",
+    )
 
     st.subheader("Measure markers")
     beat_times = analysis.get("beat_times") or []
@@ -308,4 +378,7 @@ if click_bytes and stem_bytes:
         st.subheader("Full stem")
         st.audio(play_bytes)
 else:
-    st.info("Upload a Transcribe .xsc (stem path is read from SoundFileName) or a click track plus stem.")
+    st.info(
+        "Open a `.splitsville` session from the sidebar, or upload a Transcribe .xsc "
+        "(stem path is read from SoundFileName) / a click track plus stem, then save."
+    )
