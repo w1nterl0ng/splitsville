@@ -252,7 +252,7 @@ _HTML = r"""
 
 # Prefix so Streamlit's inline-JS hash changes when the player script does.
 _JS = (
-    "/* splitsville-score-js v8 */\n"
+    "/* splitsville-score-js v9 */\n"
     + Path(__file__).with_name("score_player.js").read_text()
 )
 

@@ -369,7 +369,7 @@ function boot(component) {
       const pat = [];
       for (let k = 0; k < n; k++) pat.push(barToken(anchor + k));
       const starts = [];
-      for (let i = 0; i <= data.n - n; i++) {
+      for (let i = 0; i <= data.n - n; ) {
         let ok = true;
         for (let k = 0; k < n; k++) {
           if (barToken(i + k) !== pat[k]) {
@@ -377,7 +377,12 @@ function boot(component) {
             break;
           }
         }
-        if (ok) starts.push(i);
+        if (ok) {
+          starts.push(i);
+          i += n;
+        } else {
+          i += 1;
+        }
       }
       return { n, starts };
     }
@@ -421,7 +426,7 @@ function boot(component) {
         : `${n}-bar phrase`;
       const hint = n === 1
         ? "Each cell is a beat. Green matches the first bar in the group. Done marks a bar finished in Guitar Pro."
-        : "Each row is the same " + n + " groups in a row. Green matches the first time that phrase appears. Done locks every bar in the row.";
+        : "Each row is the next non-overlapping " + n + "-bar repeat. Green matches the first time that phrase appears. Done locks every bar in the row.";
       const listening = player.paused ? panelAnchor : currentBar();
       let html = `<div class="matches-head"><h3>${title}</h3><button type="button" class="cleardone" id="clearDone">Clear done</button></div><p class="hint">${hint}</p>`;
       for (const start of starts) {

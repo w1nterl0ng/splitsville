@@ -52,7 +52,7 @@ You can also open a bare `project.json` or a zip, as long as the media is inside
 
 ## Matching
 
-Measures are grouped from a log-spectrogram similarity matrix (union-find). Bass uses roughly 40–400 Hz; guitar 80–2500 Hz. The right-hand panel rates each subdivision against the first bar in that group (green similar, red different). Phrase stacking appears when stop-after is 2 or more (n-grams of group IDs).
+Measures are grouped from a log-spectrogram similarity matrix (union-find). Bass uses roughly 40–400 Hz; guitar 80–2500 Hz. The right-hand panel rates each subdivision against the first bar in that group (green similar, red different). Phrase stacking appears when stop-after is 2 or more (non-overlapping runs of group IDs).
 
 Tablature stays in Guitar Pro; this app is the map, listen, match, and progress tracker.
 
